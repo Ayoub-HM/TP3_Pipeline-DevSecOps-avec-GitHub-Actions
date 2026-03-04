@@ -128,6 +128,10 @@ jobs:
     name: ⚡ DAST
     runs-on: ubuntu-latest
     needs: build
+    env:
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      ADMIN_USER: ${{ secrets.ADMIN_USER }}
+      ADMIN_PASS: ${{ secrets.ADMIN_PASS }}
     steps:
       - uses: actions/checkout@v4
       
@@ -137,9 +141,36 @@ jobs:
       
       - name: Load and run app
         run: |
+          if [ -z "$JWT_SECRET" ] || [ -z "$ADMIN_USER" ] || [ -z "$ADMIN_PASS" ]; then
+            echo "Missing required GitHub secrets: JWT_SECRET, ADMIN_USER, ADMIN_PASS"
+            exit 1
+          fi
+
           docker load < image.tar
-          docker run -d -p 3000:3000 --name app vuln-app:${{ github.sha }}
-          sleep 5
+          docker run -d -p 3000:3000 --name app \
+            -e JWT_SECRET="$JWT_SECRET" \
+            -e ADMIN_USER="$ADMIN_USER" \
+            -e ADMIN_PASS="$ADMIN_PASS" \
+            -e NODE_ENV="production" \
+            vuln-app:${{ github.sha }}
+
+          # Wait until the API is ready, otherwise fail early with container logs.
+          ready=0
+          for i in {1..30}; do
+            if curl -fsS http://localhost:3000/health >/dev/null; then
+              echo "App is ready for DAST."
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "App did not become ready in time."
+            docker ps -a
+            docker logs app || true
+            exit 1
+          fi
       
       - name: OWASP ZAP Baseline
         uses: zaproxy/action-baseline@v0.15.0
@@ -166,6 +197,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v4
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ./frontend/build
