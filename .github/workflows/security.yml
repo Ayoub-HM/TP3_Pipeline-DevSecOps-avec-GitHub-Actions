@@ -50,6 +50,23 @@ jobs:
   # Détecte les vulnérabilités dans les BIBLIOTHÈQUES et packages tiers (npm, etc.)
   # Outil : npm audit pour vérifier les CVE connues dans les dépendances Node.js
   # ═══════════════════════════════════════
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform Analysis
+        uses: github/codeql-action/analyze@v3
+
   sca:
     name: 📦 SCA
     runs-on: ubuntu-latest
