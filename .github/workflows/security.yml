@@ -141,14 +141,13 @@ jobs:
   security-gate:
     name: Security Gate
     runs-on: ubuntu-latest
-    needs: [sast, sca, container-scan]
+    needs: [container-scan, dast]
     if: always()
     steps:
       - name: Check results
         run: |
-          if [[ "${{ needs.sast.result }}" == "failure" ]] || \
-             [[ "${{ needs.sca.result }}" == "failure" ]] || \
-             [[ "${{ needs.container-scan.result }}" == "failure" ]]; then
+          if [[ "${{ needs.container-scan.result }}" != "success" ]] || \
+             [[ "${{ needs.dast.result }}" != "success" ]]; then
             echo "Critical vulnerabilities detected"
             exit 1
           fi
@@ -160,7 +159,7 @@ jobs:
   dast:
     name: ⚡ DAST
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, sast, sca, codeql, secrets]
     env:
       JWT_SECRET: ${{ secrets.JWT_SECRET }}
       ADMIN_USER: ${{ secrets.ADMIN_USER }}
@@ -219,7 +218,8 @@ jobs:
   deploy:
     name: 🌐 Deploy Frontend (GitHub Pages)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    needs: report
+    if: github.ref == 'refs/heads/main' && needs.report.result == 'success'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -247,7 +247,7 @@ jobs:
   report:
     name: 📊 Report
     runs-on: ubuntu-latest
-    needs: [sast, sca, secrets, container-scan]
+    needs: [security-gate, dast]
     if: always()
     steps:
       - name: Generate JSON Report
@@ -260,28 +260,20 @@ jobs:
             "branch": "${{ github.ref_name }}",
             "workflow_run": "${{ github.run_id }}",
             "results": {
-              "sast": {
-                "status": "${{ needs.sast.result }}",
-                "tool": "Semgrep"
+              "security_gate": {
+                "status": "${{ needs.security-gate.result }}",
+                "tool": "Security Gate"
               },
-              "sca": {
-                "status": "${{ needs.sca.result }}",
-                "tool": "npm audit"
-              },
-              "secrets": {
-                "status": "${{ needs.secrets.result }}",
-                "tool": "Gitleaks"
-              },
-              "container_scan": {
-                "status": "${{ needs.container-scan.result }}",
-                "tool": "Trivy"
+              "dast": {
+                "status": "${{ needs.dast.result }}",
+                "tool": "OWASP ZAP"
               }
             },
             "summary": {
-              "total_checks": 4,
-              "passed": $(echo '${{ needs.sast.result }} ${{ needs.sca.result }} ${{ needs.secrets.result }} ${{ needs.container-scan.result }}' | grep -o "success" | wc -l),
-              "failed": $(echo '${{ needs.sast.result }} ${{ needs.sca.result }} ${{ needs.secrets.result }} ${{ needs.container-scan.result }}' | grep -o "failure" | wc -l),
-              "overall_status": "$([[ "${{ needs.sast.result }}" == "failure" ]] || [[ "${{ needs.sca.result }}" == "failure" ]] || [[ "${{ needs.secrets.result }}" == "failure" ]] || [[ "${{ needs.container-scan.result }}" == "failure" ]] && echo "FAILED" || echo "PASSED")"
+              "total_checks": 2,
+              "passed": $(echo '${{ needs.security-gate.result }} ${{ needs.dast.result }}' | grep -o "success" | wc -l),
+              "failed": $(echo '${{ needs.security-gate.result }} ${{ needs.dast.result }}' | grep -o "failure" | wc -l),
+              "overall_status": "$([[ "${{ needs.security-gate.result }}" != "success" ]] || [[ "${{ needs.dast.result }}" != "success" ]] && echo "FAILED" || echo "PASSED")"
             }
           }
           EOF
@@ -300,18 +292,14 @@ jobs:
           echo "## 🔒 Security Scan Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Job Results:" >> $GITHUB_STEP_SUMMARY
-          echo "- SAST: ${{ needs.sast.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- SCA: ${{ needs.sca.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Secrets: ${{ needs.secrets.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Container Scan: ${{ needs.container-scan.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- DAST: ${{ needs.dast.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Security Gate: ${{ needs.security-gate.result }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "📥 **JSON Report available in artifacts**" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [[ "${{ needs.sast.result }}" == "failure" ]] || \
-             [[ "${{ needs.sca.result }}" == "failure" ]] || \
-             [[ "${{ needs.secrets.result }}" == "failure" ]] || \
-             [[ "${{ needs.container-scan.result }}" == "failure" ]]; then
+          if [[ "${{ needs.dast.result }}" != "success" ]] || \
+             [[ "${{ needs.security-gate.result }}" != "success" ]]; then
             echo "❌ **Security issues detected!**" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⚠️ Please review the failed jobs above" >> $GITHUB_STEP_SUMMARY
